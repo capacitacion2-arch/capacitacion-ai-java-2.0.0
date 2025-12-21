@@ -1,34 +1,35 @@
 package com.example.ticketero.service;
 
+import com.example.ticketero.exception.TicketNotFoundException;
 import com.example.ticketero.model.dto.TicketCreateRequest;
 import com.example.ticketero.model.dto.TicketResponse;
+import com.example.ticketero.model.entity.OutboxMessage;
 import com.example.ticketero.model.entity.Ticket;
 import com.example.ticketero.model.enums.QueueType;
 import com.example.ticketero.model.enums.TicketStatus;
 import com.example.ticketero.repository.OutboxMessageRepository;
 import com.example.ticketero.repository.TicketRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Optional;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static com.example.ticketero.testutil.TestDataBuilder.*;
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
-/**
- * Unit tests for TicketService.
- * Uses mocks to isolate business logic from infrastructure.
- */
 @ExtendWith(MockitoExtension.class)
+@DisplayName("TicketService - Unit Tests")
 class TicketServiceTest {
 
     @Mock
@@ -52,96 +53,160 @@ class TicketServiceTest {
     @InjectMocks
     private TicketService ticketService;
 
-    private TicketCreateRequest request;
-    private Ticket ticket;
+    // ============================================================
+    // CREAR TICKET
+    // ============================================================
+    
+    @Nested
+    @DisplayName("crearTicket()")
+    class CrearTicket {
 
-    @BeforeEach
-    void setUp() {
-        request = new TicketCreateRequest(
-                "12345678",
-                "987654321",
-                "Sucursal Centro",
-                QueueType.CAJA
-        );
-
-        ticket = Ticket.builder()
-                .id(1L)
-                .codigoReferencia(UUID.randomUUID())
+        @Test
+        @DisplayName("con datos válidos → debe crear ticket, guardar en outbox y notificar")
+        void crearTicket_conDatosValidos_debeCrearTicketOutboxYNotificar() {
+            // Given
+            TicketCreateRequest request = validTicketRequest();
+            Ticket ticketGuardado = ticketWaiting()
                 .numero("C001")
-                .nationalId("12345678")
-                .telefono("987654321")
-                .branchOffice("Sucursal Centro")
-                .queueType(QueueType.CAJA)
-                .status(TicketStatus.WAITING)
-                .positionInQueue(1)
-                .estimatedWaitMinutes(5)
-                .build();
-    }
-
-    @Test
-    @DisplayName("crearTicket should calculate position and estimated time")
-    void crearTicket_shouldCalculatePositionAndTime() {
-        // Given
-        when(queueManagementService.calcularPosicionEnCola(QueueType.CAJA)).thenReturn(1);
-        when(queueManagementService.calcularTiempoEstimado(QueueType.CAJA, 1)).thenReturn(5);
-        when(ticketRepository.saveAndFlush(any(Ticket.class))).thenReturn(ticket);
-
-        // When
-        TicketResponse response = ticketService.crearTicket(request);
-
-        // Then
-        assertThat(response).isNotNull();
-        assertThat(response.numero()).isNotBlank();
-        assertThat(response.positionInQueue()).isEqualTo(1);
-        assertThat(response.estimatedWaitMinutes()).isEqualTo(5);
-        assertThat(response.status()).isEqualTo(TicketStatus.WAITING);
-
-        // Verify interactions
-        verify(queueManagementService).calcularPosicionEnCola(QueueType.CAJA);
-        verify(queueManagementService).calcularTiempoEstimado(QueueType.CAJA, 1);
-        verify(ticketRepository).saveAndFlush(any(Ticket.class));
-        verify(outboxMessageRepository).save(any());
-        verify(notificationService).notificarTicketCreado(any(Ticket.class));
-        verify(metricsService).incrementTicketsCreated(QueueType.CAJA);
-    }
-
-    @Test
-    @DisplayName("crearTicket should save message to outbox for reliable messaging")
-    void crearTicket_shouldSaveToOutbox() {
-        // Given
-        when(queueManagementService.calcularPosicionEnCola(QueueType.PERSONAL)).thenReturn(3);
-        when(queueManagementService.calcularTiempoEstimado(QueueType.PERSONAL, 3)).thenReturn(15);
-
-        Ticket personalTicket = Ticket.builder()
-                .id(2L)
-                .codigoReferencia(UUID.randomUUID())
-                .numero("P002")
-                .nationalId("87654321")
-                .telefono("123456789")
-                .branchOffice("Sucursal Norte")
-                .queueType(QueueType.PERSONAL)
-                .status(TicketStatus.WAITING)
                 .positionInQueue(3)
-                .estimatedWaitMinutes(15)
+                .estimatedWaitMinutes(10)
                 .build();
 
-        when(ticketRepository.saveAndFlush(any(Ticket.class))).thenReturn(personalTicket);
+            when(queueManagementService.calcularPosicionEnCola(QueueType.CAJA)).thenReturn(3);
+            when(queueManagementService.calcularTiempoEstimado(QueueType.CAJA, 3)).thenReturn(10);
+            when(ticketRepository.saveAndFlush(any(Ticket.class))).thenReturn(ticketGuardado);
 
-        TicketCreateRequest personalRequest = new TicketCreateRequest(
-                "87654321",
-                "123456789",
-                "Sucursal Norte",
-                QueueType.PERSONAL
-        );
+            // When
+            TicketResponse response = ticketService.crearTicket(request);
 
-        // When
-        TicketResponse response = ticketService.crearTicket(personalRequest);
+            // Then
+            assertThat(response).isNotNull();
+            assertThat(response.numero()).isEqualTo("C001");
+            assertThat(response.positionInQueue()).isEqualTo(3);
+            assertThat(response.estimatedWaitMinutes()).isEqualTo(10);
+            assertThat(response.status()).isEqualTo(TicketStatus.WAITING);
 
-        // Then
-        assertThat(response.queueType()).isEqualTo(QueueType.PERSONAL);
-        assertThat(response.positionInQueue()).isEqualTo(3);
+            // Verificar orden: primero ticket, luego outbox
+            var inOrder = inOrder(ticketRepository, outboxMessageRepository, notificationService);
+            inOrder.verify(ticketRepository).saveAndFlush(any(Ticket.class));
+            inOrder.verify(outboxMessageRepository).save(any(OutboxMessage.class));
+            inOrder.verify(notificationService).notificarTicketCreado(any(Ticket.class));
 
-        // Verify outbox pattern: message saved to outbox table
-        verify(outboxMessageRepository).save(any());
+            verify(metricsService).incrementTicketsCreated(QueueType.CAJA);
+        }
+
+        @Test
+        @DisplayName("debe guardar mensaje en Outbox con datos correctos")
+        void crearTicket_debeGuardarOutboxConDatosCorrectos() {
+            // Given
+            TicketCreateRequest request = validTicketRequest();
+            Ticket ticketGuardado = ticketWaiting().id(99L).numero("C099").build();
+
+            when(queueManagementService.calcularPosicionEnCola(any())).thenReturn(1);
+            when(queueManagementService.calcularTiempoEstimado(any(), anyInt())).thenReturn(5);
+            when(ticketRepository.saveAndFlush(any())).thenReturn(ticketGuardado);
+
+            // When
+            ticketService.crearTicket(request);
+
+            // Then
+            ArgumentCaptor<OutboxMessage> captor = ArgumentCaptor.forClass(OutboxMessage.class);
+            verify(outboxMessageRepository).save(captor.capture());
+
+            OutboxMessage outbox = captor.getValue();
+            assertThat(outbox.getAggregateType()).isEqualTo("TICKET");
+            assertThat(outbox.getAggregateId()).isEqualTo(99L);
+            assertThat(outbox.getEventType()).isEqualTo("TICKET_CREATED");
+            assertThat(outbox.getRoutingKey()).isEqualTo("caja-queue");
+            assertThat(outbox.getStatus()).isEqualTo("PENDING");
+            assertThat(outbox.getPayload()).contains("C099");
+        }
+
+        @Test
+        @DisplayName("para cola PERSONAL → debe usar routing key personal-queue")
+        void crearTicket_colaPersonal_debeUsarRoutingKeyCorrecto() {
+            // Given
+            TicketCreateRequest request = new TicketCreateRequest(
+                "12345678", "+56912345678", "Sucursal Centro", QueueType.PERSONAL
+            );
+            Ticket ticketGuardado = ticketWaiting()
+                .queueType(QueueType.PERSONAL)
+                .numero("P001")
+                .build();
+
+            when(queueManagementService.calcularPosicionEnCola(any())).thenReturn(1);
+            when(queueManagementService.calcularTiempoEstimado(any(), anyInt())).thenReturn(10);
+            when(ticketRepository.saveAndFlush(any())).thenReturn(ticketGuardado);
+
+            // When
+            ticketService.crearTicket(request);
+
+            // Then
+            ArgumentCaptor<OutboxMessage> captor = ArgumentCaptor.forClass(OutboxMessage.class);
+            verify(outboxMessageRepository).save(captor.capture());
+            assertThat(captor.getValue().getRoutingKey()).isEqualTo("personal-queue");
+        }
+
+        @Test
+        @DisplayName("sin teléfono → debe crear ticket y notificar igual")
+        void crearTicket_sinTelefono_debeCrearYNotificar() {
+            // Given
+            TicketCreateRequest request = ticketRequestSinTelefono();
+            Ticket ticketGuardado = ticketWaiting().telefono(null).build();
+
+            when(queueManagementService.calcularPosicionEnCola(any())).thenReturn(1);
+            when(queueManagementService.calcularTiempoEstimado(any(), anyInt())).thenReturn(5);
+            when(ticketRepository.saveAndFlush(any())).thenReturn(ticketGuardado);
+
+            // When
+            TicketResponse response = ticketService.crearTicket(request);
+
+            // Then
+            assertThat(response).isNotNull();
+            verify(notificationService).notificarTicketCreado(any());
+        }
+    }
+
+    // ============================================================
+    // OBTENER TICKET
+    // ============================================================
+    
+    @Nested
+    @DisplayName("obtenerTicketPorCodigo()")
+    class ObtenerTicket {
+
+        @Test
+        @DisplayName("con UUID existente → debe retornar ticket")
+        void obtenerTicket_conUuidExistente_debeRetornarTicket() {
+            // Given
+            UUID codigo = UUID.randomUUID();
+            Ticket ticket = ticketWaiting()
+                .codigoReferencia(codigo)
+                .numero("C001")
+                .build();
+
+            when(ticketRepository.findByCodigoReferencia(codigo)).thenReturn(Optional.of(ticket));
+
+            // When
+            TicketResponse response = ticketService.obtenerTicketPorCodigo(codigo);
+
+            // Then
+            assertThat(response).isNotNull();
+            assertThat(response.codigoReferencia()).isEqualTo(codigo);
+            assertThat(response.numero()).isEqualTo("C001");
+        }
+
+        @Test
+        @DisplayName("con UUID inexistente → debe lanzar TicketNotFoundException")
+        void obtenerTicket_conUuidInexistente_debeLanzarExcepcion() {
+            // Given
+            UUID codigo = UUID.randomUUID();
+            when(ticketRepository.findByCodigoReferencia(codigo)).thenReturn(Optional.empty());
+
+            // When + Then
+            assertThatThrownBy(() -> ticketService.obtenerTicketPorCodigo(codigo))
+                .isInstanceOf(TicketNotFoundException.class)
+                .hasMessageContaining(codigo.toString());
+        }
     }
 }
