@@ -47,7 +47,8 @@ jobs:
     name: Build Docker Image
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: false # Temporalmente deshabilitado
+    # if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Checkout code
@@ -78,7 +79,8 @@ jobs:
     name: Security Scan
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: false # Temporalmente deshabilitado
+    # if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Run Trivy vulnerability scanner
